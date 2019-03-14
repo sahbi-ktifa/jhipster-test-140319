@@ -1,5 +1,9 @@
 package com.mycompany.myapp.service;
 
+import com.algolia.search.APIClient;
+import com.algolia.search.ApacheAPIClientBuilder;
+import com.algolia.search.Index;
+import com.algolia.search.exceptions.AlgoliaException;
 import com.mycompany.myapp.config.Constants;
 import com.mycompany.myapp.domain.Authority;
 import com.mycompany.myapp.domain.User;
@@ -26,6 +30,8 @@ import java.time.temporal.ChronoUnit;
 import java.util.*;
 import java.util.stream.Collectors;
 
+import javax.annotation.PostConstruct;
+
 /**
  * Service class for managing users.
  */
@@ -43,51 +49,56 @@ public class UserService {
 
     private final CacheManager cacheManager;
 
-    public UserService(UserRepository userRepository, PasswordEncoder passwordEncoder, AuthorityRepository authorityRepository, CacheManager cacheManager) {
+    private Index<User> index;
+
+    public UserService(UserRepository userRepository, PasswordEncoder passwordEncoder,
+            AuthorityRepository authorityRepository, CacheManager cacheManager) {
         this.userRepository = userRepository;
         this.passwordEncoder = passwordEncoder;
         this.authorityRepository = authorityRepository;
         this.cacheManager = cacheManager;
     }
 
+    @PostConstruct
+    public void init() {
+        APIClient client = new ApacheAPIClientBuilder("", "").build();
+        index = client.initIndex("user", User.class);
+    }
+
     public Optional<User> activateRegistration(String key) {
         log.debug("Activating user for activation key {}", key);
-        return userRepository.findOneByActivationKey(key)
-            .map(user -> {
-                // activate given user for the registration key.
-                user.setActivated(true);
-                user.setActivationKey(null);
-                this.clearUserCaches(user);
-                log.debug("Activated user: {}", user);
-                return user;
-            });
+        return userRepository.findOneByActivationKey(key).map(user -> {
+            // activate given user for the registration key.
+            user.setActivated(true);
+            user.setActivationKey(null);
+            this.clearUserCaches(user);
+            log.debug("Activated user: {}", user);
+            return user;
+        });
     }
 
     public Optional<User> completePasswordReset(String newPassword, String key) {
         log.debug("Reset user password for reset key {}", key);
         return userRepository.findOneByResetKey(key)
-            .filter(user -> user.getResetDate().isAfter(Instant.now().minusSeconds(86400)))
-            .map(user -> {
-                user.setPassword(passwordEncoder.encode(newPassword));
-                user.setResetKey(null);
-                user.setResetDate(null);
-                this.clearUserCaches(user);
-                return user;
-            });
+                .filter(user -> user.getResetDate().isAfter(Instant.now().minusSeconds(86400))).map(user -> {
+                    user.setPassword(passwordEncoder.encode(newPassword));
+                    user.setResetKey(null);
+                    user.setResetDate(null);
+                    this.clearUserCaches(user);
+                    return user;
+                });
     }
 
     public Optional<User> requestPasswordReset(String mail) {
-        return userRepository.findOneByEmailIgnoreCase(mail)
-            .filter(User::getActivated)
-            .map(user -> {
-                user.setResetKey(RandomUtil.generateResetKey());
-                user.setResetDate(Instant.now());
-                this.clearUserCaches(user);
-                return user;
-            });
+        return userRepository.findOneByEmailIgnoreCase(mail).filter(User::getActivated).map(user -> {
+            user.setResetKey(RandomUtil.generateResetKey());
+            user.setResetDate(Instant.now());
+            this.clearUserCaches(user);
+            return user;
+        });
     }
 
-    public User registerUser(UserDTO userDTO, String password) {
+    public User registerUser(UserDTO userDTO, String password) throws AlgoliaException {
         userRepository.findOneByLogin(userDTO.getLogin().toLowerCase()).ifPresent(existingUser -> {
             boolean removed = removeNonActivatedUser(existingUser);
             if (!removed) {
@@ -120,6 +131,7 @@ public class UserService {
         userRepository.save(newUser);
         this.clearUserCaches(newUser);
         log.debug("Created Information for User: {}", newUser);
+        index.addObject(newUser);
         return newUser;
     }
 
@@ -133,7 +145,7 @@ public class UserService {
         return true;
     }
 
-    public User createUser(UserDTO userDTO) {
+    public User createUser(UserDTO userDTO) throws AlgoliaException {
         User user = new User();
         user.setLogin(userDTO.getLogin().toLowerCase());
         user.setFirstName(userDTO.getFirstName());
@@ -161,6 +173,7 @@ public class UserService {
         userRepository.save(user);
         this.clearUserCaches(user);
         log.debug("Created Information for User: {}", user);
+        index.addObject(user);
         return user;
     }
 
@@ -184,6 +197,12 @@ public class UserService {
                 user.setImageUrl(imageUrl);
                 this.clearUserCaches(user);
                 log.debug("Changed Information for User: {}", user);
+                    try {
+                        index.saveObject(user.getId().toString(), user);
+                    } catch (AlgoliaException e) {
+                        // TODO Auto-generated catch block
+                        e.printStackTrace();
+                    }
             });
     }
 

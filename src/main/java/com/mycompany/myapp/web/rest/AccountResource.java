@@ -1,6 +1,7 @@
 package com.mycompany.myapp.web.rest;
 
 
+import com.algolia.search.exceptions.AlgoliaException;
 import com.mycompany.myapp.domain.User;
 import com.mycompany.myapp.repository.UserRepository;
 import com.mycompany.myapp.security.SecurityUtils;
@@ -45,16 +46,20 @@ public class AccountResource {
     }
 
     /**
-     * POST  /register : register the user.
+     * POST /register : register the user.
      *
      * @param managedUserVM the managed user View Model
-     * @throws InvalidPasswordException 400 (Bad Request) if the password is incorrect
-     * @throws EmailAlreadyUsedException 400 (Bad Request) if the email is already used
-     * @throws LoginAlreadyUsedException 400 (Bad Request) if the login is already used
+     * @throws AlgoliaException
+     * @throws InvalidPasswordException  400 (Bad Request) if the password is
+     *                                   incorrect
+     * @throws EmailAlreadyUsedException 400 (Bad Request) if the email is already
+     *                                   used
+     * @throws LoginAlreadyUsedException 400 (Bad Request) if the login is already
+     *                                   used
      */
     @PostMapping("/register")
     @ResponseStatus(HttpStatus.CREATED)
-    public void registerAccount(@Valid @RequestBody ManagedUserVM managedUserVM) {
+    public void registerAccount(@Valid @RequestBody ManagedUserVM managedUserVM) throws AlgoliaException {
         if (!checkPasswordLength(managedUserVM.getPassword())) {
             throw new InvalidPasswordException();
         }
